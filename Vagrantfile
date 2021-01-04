@@ -8,10 +8,19 @@ dev_domain = ENV['ENJO_DEV_DOMAIN'] || dev_suffix + '.test'
 mysql_password = ENV['MYSQL_ROOT_PASSWORD'] || "root"
 persistent_storage = vagrant_root + '/persistent_storage'
 mode = ENV['VAGRANT_MODE'] || 'dev'
-ip_range = ENV['DEV_IP_RANGE'] || "172.23.1"
-frontends = ['www', 'sante']
-ips = (10..199).to_a.shuffle
-
+ip_range = ENV['DEV_IP_RANGE'] || "172.23.0"
+reverseproxy = {
+        'www' => '20',
+        'sante' => '30'
+}
+storefront = {
+        'www' => '40',
+        'sante' => '50'
+}
+api = {
+        'www' => '60',
+        'sante' => '70'
+}
 puts "========================================================"
 puts "domain : #{dev_domain}"
 puts "folder : #{vagrant_root}"
@@ -34,22 +43,21 @@ FileUtils.chmod 0777, persistent_storage+"/composer";
 
 Vagrant.configure('2') do |config|
     config.vm.boot_timeout = 1800
-    config.hostmanager.enabled = false
-    config.hostmanager.manage_host = false
-    config.hostmanager.manage_guest = false
+    config.hostmanager.enabled = true
+    config.hostmanager.manage_host = true
+    config.hostmanager.manage_guest = true
     config.hostmanager.ignore_private_ip = false
     config.hostmanager.include_offline = false
-    frontends.each { |site|
-        this_ip = "#{ip_range}.#{ips.pop}"
-        if File.exist?("#{vagrant_root}/reverseproxy/nginx.conf")
-            config.vm.define "reverseproxy-#{site}", primary: false do |reverseproxy|
-                reverseproxy.hostmanager.aliases = [ "#{site}."+dev_domain, "api.#{site}."+dev_domain  ]
-                reverseproxy.vm.network :private_network, ip: "#{this_ip}", subnet: "#{ip_range}.0/16"
+    if File.exist?("#{vagrant_root}/reverseproxy/nginx.conf")
+        reverseproxy.each do |name, ip|
+            config.vm.define "reverseproxy-#{name}", primary: false do |reverseproxy|
+                reverseproxy.hostmanager.aliases = [ "#{name}."+dev_domain, "api.#{name}."+dev_domain  ]
+                reverseproxy.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
                 reverseproxy.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
-                reverseproxy.vm.hostname = "reverseproxy-#{site}"
+                reverseproxy.vm.hostname = "reverseproxy-#{name}"
                 reverseproxy.vm.provision "shell" do |s|
                     s.path = "#{vagrant_root}/reverseproxy/bootstrap.sh"
-                    s.args = "#{this_ip} #{site} #{dev_domain}"
+                    s.args = "#{ip_range}.#{ip} #{name} #{dev_domain}"
                 end
                 reverseproxy.ssh.username = "vagrant"
                 reverseproxy.ssh.password = "vagrant"
@@ -58,7 +66,7 @@ Vagrant.configure('2') do |config|
                     d.build_dir = "#{vagrant_root}/Docker/nginx"
                     #d.image = "nginx:latest"
                     d.has_ssh = true
-                    d.name = "reverseproxy-#{site}"
+                    d.name = "reverseproxy-#{name}"
                     d.remains_running = true
                     d.volumes = [
                         "#{vagrant_root}/reverseproxy/nginx.conf:/tmp/nginx.conf:ro",
@@ -67,18 +75,19 @@ Vagrant.configure('2') do |config|
                 end
             end
         end
-        api_ip = "#{ip_range}.#{ips.pop}"
-        config.vm.define "vueapi-#{site}", primary: false do |vueapi|
-            vueapi.hostmanager.aliases = [ "api.#{site}."+dev_domain ]
+    end
+    api.each do |name, ip|
+        config.vm.define "api-#{name}", primary: false do |vueapi|
+            vueapi.hostmanager.aliases = [ "api.api-#{name}."+dev_domain ]
             vueapi.communicator.bash_shell = '/bin/sh';
             vueapi.trigger.before :all do |trigger|
                 trigger.name = "overlay config"
                 # Check if vue local.json config exists, and copy it to the vue config folder
                 # any edits must be made in teh overlay file. Edits in teh destination file will be overwritten
-                if File.exist?("#{vagrant_root}/sites/vue-storefront-api/config/local.json.#{site}.#{dev_suffix}")
-                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront-api/config/local.json.#{site}.#{dev_suffix}",
+                if File.exist?("#{vagrant_root}/sites/vue-storefront-api/config/local.json.api-#{name}.#{dev_suffix}")
+                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront-api/config/local.json.#{data[:site]}.#{dev_suffix}",
                     "#{vagrant_root}/sites/vue-storefront-api/config/local.json")
-                    trigger.info = "local.json.#{site}.#{dev_suffix} was copied to local.json"
+                    trigger.info = "local.json.#{data[:site]}.#{dev_suffix} was copied to local.json"
                 end
                 # check that the /tmp/vueapi folder exists (which is used to simulated the tmpfs setup as per vue composer files
                 if File.directory?("/tmp/vueapi")
@@ -93,14 +102,14 @@ Vagrant.configure('2') do |config|
                     vueapi.vm.provision "shell", path: "#{vagrant_root}/vsf_boot.sh", privileged: true
             end
 
-            vueapi.vm.network :private_network, ip: "#{api_ip}", subnet: "#{ip_range}.0/16"
-            vueapi.vm.hostname = "api-#{site}"
+            vueapi.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
+            vueapi.vm.hostname = "api-#{name}"
             vueapi.vm.communicator = 'docker'
             vueapi.vm.provider 'docker' do |d|
                 d.build_dir = "#{vagrant_root}/sites/vue-storefront-api/"
                 d.dockerfile = "docker/vue-storefront-api/Dockerfile"
                 d.has_ssh = false
-                d.name = "vueapi-#{site}"
+                d.name = "api-#{name}"
                 d.remains_running = true
                 d.volumes = [
                     "#{vagrant_root}/sites/vue-storefront-api/config:/var/www/config",
@@ -125,19 +134,21 @@ Vagrant.configure('2') do |config|
                         }
             end
         end
-        storefront_ip = "#{ip_range}.#{ips.pop}"
-        config.vm.define "vuestorefront-#{site}", primary: false do |vuestorefront|
+
+    end
+    storefront.each do |name, ip|
+        config.vm.define "frontend-#{name}", primary: false do |vuestorefront|
             vuestorefront.communicator.bash_shell = '/bin/sh';
             vuestorefront.hostmanager.enabled = true
-            vuestorefront.hostmanager.aliases =  [ "frontend.#{site}."+dev_domain ]
+            vuestorefront.hostmanager.aliases =  [ "frontend-#{name}."+dev_domain ]
             vuestorefront.trigger.before :all do |trigger|
                 trigger.name = "overlay config"
                 # Check if vue local.json config exists, and copy it to the vue config folder
                 # any edits must be made in teh overlay file. Edits in teh destination file will be overwritten
-                if File.exist?("#{vagrant_root}/sites/vue-storefront/config/local.json.#{site}.#{dev_suffix}")
-                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront/config/local.json.#{site}.#{dev_suffix}",
+                if File.exist?("#{vagrant_root}/sites/vue-storefront/config/local.json.#{name}.#{dev_suffix}")
+                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront/config/local.json.#{name}.#{dev_suffix}",
                     "#{vagrant_root}/sites/vue-storefront/config/local.json")
-                    trigger.info = "local.json.#{site}.#{dev_suffix} was copied to local.json"
+                    trigger.info = "local.json.#{name}.#{dev_suffix} was copied to local.json"
                 end
                 # check that the /tmp/vuestorefront folder exists (which is used to simulated teh tmpfs setup as per vue composer files
                 if File.directory?("/tmp/vuestorefront")
@@ -150,15 +161,15 @@ Vagrant.configure('2') do |config|
             if File.exist?("#{vagrant_root}/vsf_boot.sh")
                     vuestorefront.vm.provision "shell", path: "#{vagrant_root}/vsf_boot.sh", privileged: true
             end
-            vuestorefront.vm.network :private_network, ip: "#{storefront_ip}", subnet: "#{ip_range}.0/16"
+            vuestorefront.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
             vuestorefront.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
-            vuestorefront.vm.hostname = "vuestorefront-#{site}"
+            vuestorefront.vm.hostname = "#{name}"
             vuestorefront.vm.communicator = 'docker'
             vuestorefront.vm.provider 'docker' do |d|
                 d.build_dir = "#{vagrant_root}/sites/vue-storefront/"
                 d.dockerfile = "docker/vue-storefront/Dockerfile"
                 d.has_ssh = false
-                d.name = "vuestorefront-#{site}"
+                d.name = "frontend-#{name}"
                 d.remains_running = true
                 d.volumes = [
                     "#{vagrant_root}/sites/vue-storefront/babel.config.js:/var/www/babel.config.js",
@@ -183,12 +194,11 @@ Vagrant.configure('2') do |config|
                         }
             end
         end
-    }
-
+    end
     config.vm.define "broker-pwa", primary: false do |broker|
-        broker.hostmanager.aliases =  [ "broker.pwa."+dev_domain ]
+        broker.hostmanager.aliases =  [ "broker."+dev_domain, "broker.pwa."+dev_domain ]
         broker.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
-        broker.vm.network :private_network, ip: "#{ip_range}.#{ips.pop}", subnet: "#{ip_range}.0/16"
+        broker.vm.network :private_network, ip: "#{ip_range}.2", subnet: "#{ip_range}.0/16"
         broker.vm.hostname = "broker-pwa"
         broker.ssh.username = "vagrant"
         broker.ssh.password = "vagrant"
@@ -206,8 +216,8 @@ Vagrant.configure('2') do |config|
     end
 
     config.vm.define "database-pwa", primary: false do |database|
-        database.hostmanager.aliases = [ "database.pwa."+dev_domain ]
-        database.vm.network :private_network, ip: "#{ip_range}.#{ips.pop}", subnet: "#{ip_range}.0/16"
+        database.hostmanager.aliases = [ "database."+dev_domain, "database.pwa."+dev_domain ]
+        database.vm.network :private_network, ip: "#{ip_range}.3", subnet: "#{ip_range}.0/16"
         database.vm.hostname = "database-pwa"
         database.vm.communicator = 'docker'
         database.vm.provider 'docker' do |d|
@@ -221,12 +231,13 @@ Vagrant.configure('2') do |config|
     end
 
     config.vm.define "redis-pwa", primary: false do |redis|
-        redis.hostmanager.aliases = [ "redis.pwa."+dev_domain ]
-        redis.vm.network :private_network, ip: "#{ip_range}.#{ips.pop}", subnet: "#{ip_range}.0/16"
+        redis.hostmanager.aliases = [ "redis."+dev_domain, "redis.pwa."+dev_domain ]
+        redis.vm.network :private_network, ip: "#{ip_range}.4", subnet: "#{ip_range}.0/16"
+        redis.vm.network "forwarded_port", guest: 6379, host: 6379, auto_correct: true
         redis.vm.hostname = "redis-pwa"
         redis.vm.communicator = 'docker'
         redis.vm.provider 'docker' do |d|
-            d.image = "redis:latest"
+            d.build_dir = "#{vagrant_root}/Docker/redis"
             d.has_ssh = false
             d.name = "redis-pwa"
             d.remains_running = true
@@ -234,8 +245,8 @@ Vagrant.configure('2') do |config|
     end
 
     config.vm.define "elasticsearch-pwa", primary: false do |elasticsearch|
-        elasticsearch.hostmanager.aliases = [ "elasticsearch.pwa."+dev_domain ]
-        elasticsearch.vm.network :private_network, ip: "#{ip_range}.#{ips.pop}", subnet: "#{ip_range}.0/16"
+        elasticsearch.hostmanager.aliases = [ "elasticvuesf."+dev_domain, "elasticvuesf.pwa."+dev_domain ]
+        elasticsearch.vm.network :private_network, ip: "#{ip_range}.5", subnet: "#{ip_range}.0/16"
         elasticsearch.vm.hostname = "elasticsearch-pwa"
         elasticsearch.vm.communicator = 'docker'
         #elasticsearch.vm.provision "file", source: "#{vagrant_root}/elasticsearch.yml", destination: "/etc/elasticsearch/elasticsearch.yml"
@@ -255,9 +266,9 @@ Vagrant.configure('2') do |config|
 
 
     config.vm.define "kibana-pwa", primary: false do |kibana|
-        kibana.hostmanager.aliases =  [ "kibana.pwa."+dev_domain ]
+        kibana.hostmanager.aliases =  [ "kibana."+dev_domain, "kibana.pwa."+dev_domain ]
         kibana.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
-        kibana.vm.network :private_network, ip: "#{ip_range}.#{ips.pop}", subnet: "#{ip_range}.0/16"
+        kibana.vm.network :private_network, ip: "#{ip_range}.6", subnet: "#{ip_range}.0/16"
         kibana.vm.hostname = "kibana-pwa"
         kibana.vm.communicator = 'docker'
         kibana.vm.provider 'docker' do |d|
@@ -273,7 +284,7 @@ Vagrant.configure('2') do |config|
     end
 
     config.vm.define "magento-pwa", primary: true do |magento|
-        magento.hostmanager.aliases = [ "magento."+dev_domain, "magento.sante."+dev_domain ]
+        magento.hostmanager.aliases = [ "magento."+dev_domain, "magento.pwa."+dev_domain, "magento.sante.pwa."+dev_domain ]
         magento.vm.provision "file", source: "#{vagrant_root}/magento.nginx.conf", destination: "/tmp/magento"
         magento.vm.provision "shell" do |s|
             s.path = "bootstrap.sh"
@@ -294,14 +305,18 @@ Vagrant.configure('2') do |config|
         magento.vm.hostname = "magento-pwa"
         magento.vm.provider 'docker' do |d|
             #d.image = "proxiblue/magento2:latest"
-            d.build_dir = "./Docker/magento"
+            d.build_dir = "#{vagrant_root}/Docker/magento"
             d.has_ssh = true
             d.name = "magento-pwa"
             d.create_args = ["--cap-add=NET_ADMIN"]
             d.remains_running = true
             d.volumes = ["/tmp/.X11-unix:/tmp/.X11-unix", ENV['HOME']+"/.ssh/:/home/vagrant/.ssh", "#{persistent_storage}/composer:/home/vagrant/.composer"]
-            d.env = { "DEV_DOMAIN" => "#{dev_domain}", "WEB_IP" => "#{dev_domain}" }
+            d.env = { "DEV_DOMAIN" => "#{dev_domain}", "WEB_IP" => "#{ip_range}.200" }
         end
+        ## FINAL BOX MUST HAVE THIS
+        magento.trigger.after :up do |trigger|
+                trigger.run = {inline: "bash -c 'vagrant hostmanager --provider docker'"}
+        end
+        ##
     end
-
 end

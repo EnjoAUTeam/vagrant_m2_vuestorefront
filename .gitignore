@@ -6,3 +6,8 @@ custom/*
 reverseproxy/*
 persistent_storage/
 storage
+*.gz
+*.bz2
+*.tar
+*.sql
+*~
