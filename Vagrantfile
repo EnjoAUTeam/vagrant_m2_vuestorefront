@@ -9,15 +9,15 @@ mysql_password = ENV['MYSQL_ROOT_PASSWORD'] || "root"
 persistent_storage = vagrant_root + '/persistent_storage'
 mode = ENV['VAGRANT_MODE'] || 'dev'
 ip_range = ENV['DEV_IP_RANGE'] || "172.23.0"
-reverseproxy = {
+reverseproxynodes = {
         'www' => '20',
         'sante' => '30'
 }
-storefront = {
+storefrontnodes = {
         'www' => '40',
         'sante' => '50'
 }
-api = {
+apinodes = {
         'www' => '60',
         'sante' => '70'
 }
@@ -48,52 +48,16 @@ Vagrant.configure('2') do |config|
     config.hostmanager.manage_guest = true
     config.hostmanager.ignore_private_ip = false
     config.hostmanager.include_offline = false
-    if File.exist?("#{vagrant_root}/reverseproxy/nginx.conf")
-        reverseproxy.each do |name, ip|
-            config.vm.define "reverseproxy-#{name}", primary: false do |reverseproxy|
-                reverseproxy.hostmanager.aliases = [ "#{name}."+dev_domain, "api.#{name}."+dev_domain  ]
-                reverseproxy.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
-                reverseproxy.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
-                reverseproxy.vm.hostname = "reverseproxy-#{name}"
-                reverseproxy.vm.provision "shell" do |s|
-                    s.path = "#{vagrant_root}/reverseproxy/bootstrap.sh"
-                    s.args = "#{ip_range}.#{ip} #{name} #{dev_domain}"
-                end
-                reverseproxy.ssh.username = "vagrant"
-                reverseproxy.ssh.password = "vagrant"
-                reverseproxy.ssh.keys_only = false
-                reverseproxy.vm.provider 'docker' do |d|
-                    d.build_dir = "#{vagrant_root}/Docker/nginx"
-                    #d.image = "nginx:latest"
-                    d.has_ssh = true
-                    d.name = "reverseproxy-#{name}"
-                    d.remains_running = true
-                    d.volumes = [
-                        "#{vagrant_root}/reverseproxy/nginx.conf:/tmp/nginx.conf:ro",
-                        "#{vagrant_root}/Docker/magento/common/nginx/ssl:/etc/nginx/ssl"
-                    ]
-                end
-            end
-        end
-    end
-    api.each do |name, ip|
+    apinodes.each do |name, ip|
         config.vm.define "api-#{name}", primary: false do |vueapi|
-            vueapi.hostmanager.aliases = [ "api.api-#{name}."+dev_domain ]
+            vueapi.hostmanager.aliases = [ "api.#{name}."+dev_domain ]
             vueapi.communicator.bash_shell = '/bin/sh';
             vueapi.trigger.before :all do |trigger|
-                trigger.name = "overlay config"
-                # Check if vue local.json config exists, and copy it to the vue config folder
-                # any edits must be made in teh overlay file. Edits in teh destination file will be overwritten
-                if File.exist?("#{vagrant_root}/sites/vue-storefront-api/config/local.json.api-#{name}.#{dev_suffix}")
-                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront-api/config/local.json.#{data[:site]}.#{dev_suffix}",
-                    "#{vagrant_root}/sites/vue-storefront-api/config/local.json")
-                    trigger.info = "local.json.#{data[:site]}.#{dev_suffix} was copied to local.json"
-                end
                 # check that the /tmp/vueapi folder exists (which is used to simulated the tmpfs setup as per vue composer files
-                if File.directory?("/tmp/vueapi")
-                    FileUtils.rm_rf("/tmp/vueapi")
-                    FileUtils.mkdir_p("/tmp/vueapi")
-                    trigger.info = "Temp folder /tmp/vueapi created."
+                if File.directory?("/tmp/vueapi_#{name}")
+                    FileUtils.rm_rf("/tmp/vueapi_#{name}")
+                    FileUtils.mkdir_p("/tmp/vueapi_#{name}")
+                    trigger.info = "Temp folder /tmp/vueapi_#{name} created and will be mapped to the docker filesystem as a volume"
                 end
                 trigger.ignore = [:destroy, :halt]
             end
@@ -122,7 +86,8 @@ Vagrant.configure('2') do |config|
                     "#{vagrant_root}/sites/vue-storefront-api/scripts:/var/www/scripts",
                     "#{vagrant_root}/sites/vue-storefront-api/src:/var/www/src",
                     "#{vagrant_root}/sites/vue-storefront-api/var:/var/www/var",
-                    "/tmp/vueapi:/var/www/dist"
+                    "/tmp/vueapi_#{name}:/var/www/dist",
+                    "#{vagrant_root}/sites/vue-storefront-api/config/local.json.#{name}.#{dev_suffix}:/var/www/config/local.json"
                     ]
                 d.env = { "BIND_HOST" => "0.0.0.0",
                           "ELASTICSEARCH_HOST" => "elasticsearch."+dev_domain,
@@ -136,25 +101,18 @@ Vagrant.configure('2') do |config|
         end
 
     end
-    storefront.each do |name, ip|
+    storefrontnodes.each do |name, ip|
         config.vm.define "frontend-#{name}", primary: false do |vuestorefront|
             vuestorefront.communicator.bash_shell = '/bin/sh';
             vuestorefront.hostmanager.enabled = true
             vuestorefront.hostmanager.aliases =  [ "frontend-#{name}."+dev_domain ]
             vuestorefront.trigger.before :all do |trigger|
-                trigger.name = "overlay config"
-                # Check if vue local.json config exists, and copy it to the vue config folder
-                # any edits must be made in teh overlay file. Edits in teh destination file will be overwritten
-                if File.exist?("#{vagrant_root}/sites/vue-storefront/config/local.json.#{name}.#{dev_suffix}")
-                    FileUtils.copy_file("#{vagrant_root}/sites/vue-storefront/config/local.json.#{name}.#{dev_suffix}",
-                    "#{vagrant_root}/sites/vue-storefront/config/local.json")
-                    trigger.info = "local.json.#{name}.#{dev_suffix} was copied to local.json"
-                end
-                # check that the /tmp/vuestorefront folder exists (which is used to simulated teh tmpfs setup as per vue composer files
-                if File.directory?("/tmp/vuestorefront")
-                    FileUtils.rm_rf("/tmp/vuestorefront")
-                    FileUtils.mkdir_p("/tmp/vuestorefront")
-                    trigger.info = "Temp folder /tmp/vuestorefront created."
+                # check that the /tmp/vuestorefront folder exists (which is used to simulated the tmpfs setup as per vue composer files
+                trigger.name = "tmp folder"
+                if File.directory?("/tmp/vuestorefront_#{name}")
+                    FileUtils.rm_rf("/tmp/vuestorefront_#{name}")
+                    FileUtils.mkdir_p("/tmp/vuestorefront_#{name}")
+                    trigger.info = "Temp folder /tmp/vuestorefront_#{name} created and will be mapped as a volume into docker node"
                 end
                 trigger.ignore = [:destroy, :halt]
             end
@@ -184,7 +142,8 @@ Vagrant.configure('2') do |config|
                     "#{vagrant_root}/sites/vue-storefront/shims.d.ts:/var/www/shims.d.ts",
                     "#{vagrant_root}/sites/vue-storefront/package.json:/var/www/package.json",
                     "#{vagrant_root}/sites/vue-storefront/src:/var/www/src",
-                    "/tmp/vuestorefront:/var/www/dist"
+                    "/tmp/vuestorefront_#{name}:/var/www/dist",
+                    "#{vagrant_root}/sites/vue-storefront/config/local.json.#{name}.#{dev_suffix}:/var/www/config/local.json"
                     ]
                 d.env = { "BIND_HOST" => "0.0.0.0",
                           "NODE_CONFIG_ENV" => "docker",
@@ -313,10 +272,43 @@ Vagrant.configure('2') do |config|
             d.volumes = ["/tmp/.X11-unix:/tmp/.X11-unix", ENV['HOME']+"/.ssh/:/home/vagrant/.ssh", "#{persistent_storage}/composer:/home/vagrant/.composer"]
             d.env = { "DEV_DOMAIN" => "#{dev_domain}", "WEB_IP" => "#{ip_range}.200" }
         end
-        ## FINAL BOX MUST HAVE THIS
-        magento.trigger.after :up do |trigger|
-                trigger.run = {inline: "bash -c 'vagrant hostmanager --provider docker'"}
+    end
+    if File.exist?("#{vagrant_root}/reverseproxy/nginx.conf")
+        reverseproxynodes.each do |name, ip|
+            config.vm.define "reverseproxy-#{name}", primary: false do |reverseproxy|
+                reverseproxy.hostmanager.aliases = [ "#{name}."+dev_domain, "api.#{name}."+dev_domain  ]
+                reverseproxy.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
+                reverseproxy.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
+                reverseproxy.vm.hostname = "reverseproxy-#{name}"
+                reverseproxy.vm.provision "shell" do |s|
+                    s.path = "#{vagrant_root}/reverseproxy/bootstrap.sh"
+                    s.args = "#{name} #{dev_domain}"
+                end
+                reverseproxy.ssh.username = "vagrant"
+                reverseproxy.ssh.password = "vagrant"
+                reverseproxy.ssh.keys_only = false
+                reverseproxy.vm.provider 'docker' do |d|
+                    d.build_dir = "#{vagrant_root}/Docker/nginx"
+                    #d.image = "nginx:latest"
+                    d.has_ssh = true
+                    d.name = "reverseproxy-#{name}"
+                    d.remains_running = true
+                    d.volumes = [
+                        "#{vagrant_root}/reverseproxy/nginx.conf:/tmp/nginx.conf:ro",
+                        "#{vagrant_root}/Docker/magento/common/nginx/ssl:/etc/nginx/ssl"
+                    ]
+                end
+                ## FINAL BOX MUST HAVE THIS
+                reverseproxy.trigger.after :up do |trigger|
+                        trigger.run = {inline: "bash -c 'vagrant hostmanager --provider docker'"}
+                end
+                ##
+                ## FINAL BOX MUST HAVE THIS
+                reverseproxy.trigger.before :up do |trigger|
+                        trigger.run = {inline: "bash -c 'vagrant hostmanager --provider docker'"}
+                end
+                ##
+            end
         end
-        ##
     end
 end
