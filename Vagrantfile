@@ -4,7 +4,7 @@ require 'fileutils'
 startSSHPort = 2250
 vagrant_root = File.dirname(__FILE__)
 dev_suffix = ENV['DEV_SUFFIX'] || "local"
-dev_domain = ENV['ENJO_DEV_DOMAIN'] || dev_suffix + '.test'
+dev_domain = ENV['ENJO_DEV_DOMAIN'] || 'enjo.test'
 mysql_password = ENV['MYSQL_ROOT_PASSWORD'] || "root"
 persistent_storage = vagrant_root + '/persistent_storage'
 mode = ENV['VAGRANT_MODE'] || 'dev'
