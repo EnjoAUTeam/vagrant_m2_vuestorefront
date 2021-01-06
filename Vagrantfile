@@ -180,7 +180,7 @@ Vagrant.configure('2') do |config|
         database.vm.hostname = "database-pwa"
         database.vm.communicator = 'docker'
         database.vm.provider 'docker' do |d|
-            d.image = "mariadb:latest"
+            d.image = "mariadb:10.2"
             d.has_ssh = false
             d.name = "database-pwa"
             d.remains_running = true
