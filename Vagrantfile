@@ -204,7 +204,7 @@ Vagrant.configure('2') do |config|
     end
 
     config.vm.define "elasticsearch-pwa", primary: false do |elasticsearch|
-        elasticsearch.hostmanager.aliases = [ "elasticvuesf."+dev_domain, "elasticvuesf.pwa."+dev_domain ]
+        elasticsearch.hostmanager.aliases = [ "elasticvuesf."+dev_domain, "elasticvuesf.pwa."+dev_domain, "elasticsearch.pwa."+dev_domain  ]
         elasticsearch.vm.network :private_network, ip: "#{ip_range}.5", subnet: "#{ip_range}.0/16"
         elasticsearch.vm.hostname = "elasticsearch-pwa"
         elasticsearch.vm.communicator = 'docker'

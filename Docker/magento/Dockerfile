@@ -77,36 +77,11 @@ RUN useradd -G www-data --create-home --shell /bin/bash vagrant && \
     phpenmod xdebug && \
     echo 'kernel.unprivileged_userns_clone=1' > /etc/sysctl.d/00-local-userns.conf && \
     service procps restart && \
-    useradd -G www-data --create-home --shell /bin/bash seluser && echo 'seluser:secret' | chpasswd && \
-    mkdir -p /opt/selenium && \
-    sudo chown seluser:seluser /opt/selenium && \
-    wget --no-verbose https://selenium-release.storage.googleapis.com/3.12/selenium-server-standalone-3.12.0.jar \
-        -O /opt/selenium/selenium-server-standalone.jar && \
-    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-      && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
-      && apt-get update -qqy \
-      && apt-get -qqy install \
-        google-chrome-stable \
-      && rm /etc/apt/sources.list.d/google-chrome.list \
-      && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
 ADD https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant.pub /home/vagrant/.ssh/authorized_keys
-ADD common/wrap_chrome_binary /tmp/
 
-RUN bash /tmp/wrap_chrome_binary && \
-export CD_VERSION=$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
-  && echo "Using chromedriver version: "$CD_VERSION \
-  && wget -q --no-verbose -O /tmp/chromedriver_linux64.zip https://chromedriver.storage.googleapis.com/$CD_VERSION/chromedriver_linux64.zip \
-  && rm -rf /opt/selenium/chromedriver \
-  && unzip /tmp/chromedriver_linux64.zip -d /opt/selenium \
-  && rm /tmp/chromedriver_linux64.zip \
-  && mv /opt/selenium/chromedriver /opt/selenium/chromedriver-$CD_VERSION \
-  && chmod 755 /opt/selenium/chromedriver-$CD_VERSION \
-  && sudo ln -fs /opt/selenium/chromedriver-$CD_VERSION /usr/bin/chromedriver
-
-ADD common/generate_config /tmp/
-RUN bash /tmp/generate_config > /opt/selenium/config.json && \
-/usr/bin/wget -q --no-verbose --no-check-certificate https://files.magerun.net/n98-magerun2.phar && \
+RUN /usr/bin/wget -q --no-verbose --no-check-certificate https://files.magerun.net/n98-magerun2.phar && \
  /bin/chmod +x ./n98-magerun2.phar && \
  mv ./n98-magerun2.phar /usr/local/bin/n98-magerun && \
   /usr/bin/php -r "readfile('https://getcomposer.org/installer');" | /usr/bin/php && \
@@ -129,7 +104,6 @@ ADD common/supervisord* /etc/supervisor/conf.d/
 ADD https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip /tmp/ngrok-stable-linux-amd64.zip
 RUN cd /tmp && unzip /tmp/ngrok-stable-linux-amd64.zip
 RUN mv /tmp/ngrok /usr/bin/
-
 
 RUN chmod 0400 /etc/sudoers.d/01_vagrant && \
  echo "source ~/git-completion.bash" >>/home/vagrant/.bashrc && \
