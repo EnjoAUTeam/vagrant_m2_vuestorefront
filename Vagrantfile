@@ -162,9 +162,6 @@ Vagrant.configure('2') do |config|
         broker.ssh.username = "vagrant"
         broker.ssh.password = "vagrant"
         broker.ssh.keys_only = false
-        broker.trigger.after :up do |trigger|
-            trigger.run = {inline: "bash -c 'vagrant hostmanager --provider docker'"}
-        end
         broker.vm.provider 'docker' do |d|
             d.image = "enjo/ubuntu-devbox:latest"
             d.has_ssh = true
@@ -276,7 +273,7 @@ Vagrant.configure('2') do |config|
     if File.exist?("#{vagrant_root}/reverseproxy/nginx.conf")
         reverseproxynodes.each do |name, ip|
             config.vm.define "reverseproxy-#{name}", primary: false do |reverseproxy|
-                reverseproxy.hostmanager.aliases = [ "#{name}."+dev_domain, "api.#{name}."+dev_domain  ]
+                reverseproxy.hostmanager.aliases = [ "#{name}."+dev_domain  ]
                 reverseproxy.vm.network :private_network, ip: "#{ip_range}.#{ip}", subnet: "#{ip_range}.0/16"
                 reverseproxy.vm.network "forwarded_port", guest: 22, host: Random.new.rand(1000...5000), id: 'ssh', auto_correct: true
                 reverseproxy.vm.hostname = "reverseproxy-#{name}"
